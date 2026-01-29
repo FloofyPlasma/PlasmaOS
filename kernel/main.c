@@ -1,11 +1,30 @@
 #include "kernel_limine.h"
 #include "serial.h"
+#include "thread.h"
 
 static void hcf(void)
 {
   for (;;)
   {
     __asm__ volatile("cli; hlt");
+  }
+}
+
+void thread_a()
+{
+  for (;;)
+  {
+    serial_print("Thread A\n");
+    thread_yield();
+  }
+}
+
+void thread_b()
+{
+  for (;;)
+  {
+    serial_print("Thread B\n");
+    thread_yield();
   }
 }
 
@@ -20,7 +39,14 @@ void kernel_main(void)
   limine_parse_info();
 
   serial_print("\nKernel initialized successfully!\n");
-  serial_print("System halted.\n");
+  serial_print("Attempting to run threads...\n");
+
+  thread_init();
+
+  thread_create(thread_a);
+  thread_create(thread_b);
+
+  scheduler_start();
 
   hcf();
 }

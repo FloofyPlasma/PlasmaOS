@@ -4,10 +4,12 @@ set(KERNEL_SOURCES
   main.c
   limine.c
   serial.c
+  thread.c
 )
 
 set(KERNEL_ASM_SOURCES
   entry.asm
+  switch.asm
 )
 
 add_executable(plasma.elf
