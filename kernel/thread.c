@@ -4,21 +4,43 @@
 
 extern void context_switch(uint64_t *old_rsp, uint64_t new_rsp);
 
-#define MAX_THREADS 2
+#define MAX_THREADS 8
 #define STACK_SIZE 4096
+#define MAX_PORTS 16
+#define MAX_MESSAGES 64
 
 static Thread *current = NULL;
 static Thread *thread_list = NULL;
-
 static uint8_t stacks[MAX_THREADS][STACK_SIZE];
 static Thread threads[MAX_THREADS];
 static int thread_count = 0;
+
+static Port ports[MAX_PORTS];
+static int port_count = 0;
+
+static Message message_pool[MAX_MESSAGES];
+static int message_pool_next = 0;
 
 void thread_init()
 {
   current = NULL;
   thread_list = NULL;
   thread_count = 0;
+  port_count = 0;
+  message_pool_next = 0;
+
+  for (int i = 0; i < MAX_MESSAGES; i++)
+  {
+    message_pool[i].next = NULL;
+  }
+
+  for (int i = 0; i < MAX_PORTS; i++)
+  {
+    ports[i].queue_head = NULL;
+    ports[i].queue_tail = NULL;
+    ports[i].message_count = 0;
+    ports[i].blocked_thread = NULL;
+  }
 }
 
 void thread_create(void (*entry)(void))
@@ -66,11 +88,48 @@ void thread_create(void (*entry)(void))
   thread_count++;
 }
 
+static Thread *find_next_runnable(Thread *start)
+{
+  Thread *candidate = start->next;
+
+  while (candidate != start)
+  {
+    if (candidate->state == THREAD_RUNNING)
+    {
+      return candidate;
+    }
+    candidate = candidate->next;
+  }
+
+  if (start->state == THREAD_RUNNING)
+  {
+    return start;
+  }
+
+  return NULL;
+}
+
 void thread_yield()
 {
+  if (!current)
+  {
+    return;
+  }
+
   Thread *prev = current;
-  current = current->next;
-  context_switch(&prev->rsp, current->rsp);
+  Thread *next = find_next_runnable(current);
+
+  if (!next)
+  {
+    return;
+  }
+
+  current = next;
+
+  if (prev != next)
+  {
+    context_switch(&prev->rsp, current->rsp);
+  }
 }
 
 void scheduler_start()
@@ -81,6 +140,196 @@ void scheduler_start()
   }
 
   current = thread_list;
+
+  Thread *runnable = find_next_runnable(current);
+  if (!runnable)
+  {
+    return;
+  }
+
+  current = runnable;
   uint64_t dummy = 0;
   context_switch(&dummy, current->rsp);
+}
+
+Thread *thread_current() { return current; }
+
+static Message *message_alloc(void)
+{
+  if (message_pool_next >= MAX_MESSAGES)
+  {
+    return NULL;
+  }
+
+  Message *msg = &message_pool[message_pool_next++];
+  msg->next = NULL;
+  return msg;
+}
+
+static void message_free(Message *msg)
+{
+  // TODO: Return to a free list
+  (void) msg;
+}
+
+Port *port_create()
+{
+  if (port_count >= MAX_PORTS)
+  {
+    return NULL;
+  }
+
+  Port *port = &ports[port_count++];
+  port->queue_head = NULL;
+  port->queue_tail = NULL;
+  port->message_count = 0;
+  port->blocked_thread = NULL;
+
+  return port;
+}
+
+void port_destroy(Port *port)
+{
+  if (!port)
+  {
+    return;
+  }
+
+  Message *msg = port->queue_head;
+  while (msg)
+  {
+    Message *next = msg->next;
+    message_free(msg);
+    msg = next;
+  }
+
+  if (port->blocked_thread)
+  {
+    port->blocked_thread->state = THREAD_RUNNING;
+    port->blocked_thread->waiting_on_port = NULL;
+  }
+
+  port->queue_head = NULL;
+  port->queue_tail = NULL;
+  port->message_count = 0;
+  port->blocked_thread = NULL;
+}
+
+int send(Port *port, uint32_t id, uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)
+{
+  if (!port)
+  {
+    return -1; // Invalid port
+  }
+
+  Message *msg = message_alloc();
+  if (!msg)
+  {
+    return -2; // Out of messages
+  }
+
+  msg->id = id;
+  msg->data[0] = d0;
+  msg->data[1] = d1;
+  msg->data[2] = d2;
+  msg->data[3] = d3;
+  msg->next = NULL;
+
+  // Check if a thread is blocked waiting on this port
+  if (port->blocked_thread)
+  {
+    Thread *blocked = port->blocked_thread;
+
+    blocked->state = THREAD_RUNNING;
+    blocked->waiting_on_port = NULL;
+    port->blocked_thread = NULL;
+  }
+
+  if (port->queue_tail)
+  {
+    port->queue_tail->next = msg;
+    port->queue_tail = msg;
+  } else
+  {
+    port->queue_head = msg;
+    port->queue_tail = msg;
+  }
+
+  port->message_count++;
+
+  return 0; // Success
+}
+
+int recv(Port *port, Message *msg_out)
+{
+  if (!port || !msg_out)
+  {
+    return -1; // Invalid parameters
+  }
+
+  if (port->queue_head)
+  {
+    Message *msg = port->queue_head;
+    port->queue_head = msg->next;
+
+    if (!port->queue_head)
+    {
+      port->queue_tail = NULL;
+    }
+
+    port->message_count--;
+
+    msg_out->id = msg->id;
+    msg_out->data[0] = msg->data[0];
+    msg_out->data[1] = msg->data[1];
+    msg_out->data[2] = msg->data[2];
+    msg_out->data[3] = msg->data[3];
+
+    message_free(msg);
+
+    return 0; // Success
+  }
+
+  if (!current)
+  {
+    return -2; // No current thread?
+  }
+
+  if (port->blocked_thread)
+  {
+    return -3; // Another thread already blocked
+  }
+
+  current->state = THREAD_BLOCKED;
+  current->waiting_on_port = port;
+  port->blocked_thread = current;
+
+  thread_yield();
+
+  // When we resume a message should be available, try to recieve again
+  if (port->queue_head)
+  {
+    Message *msg = port->queue_head;
+    port->queue_head = msg->next;
+
+    if (!port->queue_head)
+    {
+      port->queue_tail = NULL;
+    }
+
+    port->message_count--;
+
+    msg_out->id = msg->id;
+    msg_out->data[0] = msg->data[0];
+    msg_out->data[1] = msg->data[1];
+    msg_out->data[2] = msg->data[2];
+    msg_out->data[3] = msg->data[3];
+
+    message_free(msg);
+
+    return 0; // Success
+  }
+
+  // We shouldn't reach here...
+  return -4; // Woke up without a message??
 }
