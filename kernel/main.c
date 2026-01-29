@@ -1,6 +1,9 @@
 #include <stddef.h>
 
+#include "gdt.h"
+#include "idt.h"
 #include "kernel_limine.h"
+#include "pit.h"
 #include "serial.h"
 #include "thread.h"
 
@@ -91,36 +94,6 @@ void thread_sender()
   }
 }
 
-void thread_a()
-{
-  for (int i = 0; i < 3; i++)
-  {
-    serial_print("Thread A (legacy)\n");
-    thread_yield();
-  }
-
-  serial_print("Thread A: Exiting\n");
-  for (;;)
-  {
-    thread_yield();
-  }
-}
-
-void thread_b()
-{
-  for (int i = 0; i < 3; i++)
-  {
-    serial_print("Thread B (legacy)\n");
-    thread_yield();
-  }
-
-  serial_print("Thread B: Exiting\n");
-  for (;;)
-  {
-    thread_yield();
-  }
-}
-
 void kernel_main(void)
 {
   serial_init();
@@ -130,6 +103,19 @@ void kernel_main(void)
 
   serial_print("Parsing Limine bootloader info...\n");
   limine_parse_info();
+
+  serial_print("\nInitializing CPU infrastructure...\n");
+  serial_print("  - Setting up GDT (Global Descriptor Table)...\n");
+  gdt_init();
+  serial_print("  - GDT loaded successfully\n");
+
+  serial_print("  - Setting up IDT (Interrupt Descriptor Table)...\n");
+  idt_init();
+  serial_print("  - IDT loaded successfully\n");
+
+  serial_print("  - Initializing PIT (Programmable Interval Timer) at 100Hz...\n");
+  pit_init(100);
+  serial_print("  - PIT initialized, interrupts enabled\n");
 
   serial_print("\nInitializing threading subsystem...\n");
   thread_init();
