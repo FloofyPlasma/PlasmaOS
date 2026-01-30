@@ -28,6 +28,8 @@ __attribute__((used,
 __attribute__((used, section(".limine_requests"))) static volatile uint64_t limine_requests_end[2]
     = LIMINE_REQUESTS_END_MARKER;
 
+uint64_t hhdm_offset = 0;
+
 void limine_parse_info(void)
 {
   if (framebuffer_request.response && framebuffer_request.response->framebuffer_count > 0)
@@ -79,6 +81,7 @@ void limine_parse_info(void)
 
   if (hhdm_request.response)
   {
+    hhdm_offset = hhdm_request.response->offset;
     serial_print("  HHDM offset: ");
     serial_print_hex(hhdm_request.response->offset);
     serial_print("\n");
@@ -100,3 +103,6 @@ void limine_parse_info(void)
     serial_print("  Executable address: Not available\n");
   }
 }
+
+struct limine_memmap_request limine_get_memmap_request() { return memmap_request; }
+struct limine_executable_address_request limine_get_executable_address_request() { return executable_address_request; }

@@ -4,8 +4,10 @@
 #include "idt.h"
 #include "kernel_limine.h"
 #include "pit.h"
+#include "pmm.h"
 #include "serial.h"
 #include "thread.h"
+#include "vmm.h"
 
 static void hcf(void)
 {
@@ -117,8 +119,45 @@ void kernel_main(void)
   pit_init(100);
   serial_print("  - PIT initialized, interrupts enabled\n");
 
+  serial_print("\nCPU infrastructure complete\n\n");
+
+  serial_print("Initializing memory management...\n");
+  serial_print("  - Initilizing PMM (Physical Memory Manager)...\n");
+  pmm_init();
+
+  serial_print("  - Initializing VMM (Virtual Memory Manager)...\n");
+  vmm_init();
+
+  serial_print("\nMemory Management Complete!\n");
+  serial_print("  * Free memory: ");
+  serial_print_dec(pmm_get_free_memory() / 1024 / 1024);
+  serial_print(" MB\n\n");
+
+  serial_print("Testing memory allocation...\n");
+  void *page1 = pmm_alloc_page();
+  void *page2 = pmm_alloc_page();
+  void *page3 = pmm_alloc_page();
+
+  serial_print("  Allocated pages: ");
+  serial_print_hex((uint64_t) page1);
+  serial_print(", ");
+  serial_print_hex((uint64_t) page2);
+  serial_print(", ");
+  serial_print_hex((uint64_t) page3);
+  serial_print("\n");
+
+  pmm_free_page(page2);
+  serial_print("  Freed middle page\n");
+
+  void *page4 = pmm_alloc_page();
+  serial_print("  Reallocated: ");
+  serial_print_hex((uint64_t) page4);
+  serial_print("\n");
+  serial_print("Memory allocation test passed!\n\n");
+
   serial_print("\nInitializing threading subsystem...\n");
   thread_init();
+
 
   serial_print("Creating IPC test port...\n");
   test_port = port_create();

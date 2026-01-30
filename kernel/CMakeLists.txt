@@ -8,6 +8,8 @@ set(KERNEL_SOURCES
         gdt.c
         idt.c
         pit.c
+        pmm.c
+        vmm.c
 )
 
 set(KERNEL_ASM_SOURCES
