@@ -7,6 +7,7 @@ typedef enum
 {
   THREAD_RUNNING,
   THREAD_BLOCKED,
+  THREAD_DEAD,
 } ThreadState;
 
 typedef struct Thread Thread;
@@ -38,10 +39,15 @@ typedef struct Thread
   ThreadState state;
   Port *waiting_on_port;
   Thread *next;
+
+  uint64_t kernel_rsp;
+  uint64_t user_rsp;
+  int is_user_mode;
 } Thread;
 
 void thread_init(void);
 void thread_create(void (*entry)(void));
+void thread_create_user(void (*entry)(void), void *user_stack);
 void thread_yield(void);
 void scheduler_start(void);
 
@@ -49,6 +55,9 @@ Port *port_create(void);
 void port_destroy(Port *port);
 int send(Port *port, uint32_t id, uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3);
 int recv(Port *port, Message *msg_out);
+
+uint32_t port_to_id(Port *port);
+Port *port_from_id(uint32_t id);
 
 Thread *thread_current(void);
 

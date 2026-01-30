@@ -32,4 +32,4 @@ if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
   QEMU_OPTS+=(-enable-kvm)
 fi
 
-exec qemu-system-x86_64 "${QEMU_OPTS[@]}"
+exec qemu-system-x86_64 "${QEMU_OPTS[@]}" -d int,cpu_reset -D qemu.log

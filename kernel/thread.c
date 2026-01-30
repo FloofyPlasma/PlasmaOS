@@ -1,8 +1,10 @@
 #include "thread.h"
+#include "gdt.h"
 
 #include <stddef.h>
 
 extern void context_switch(uint64_t *old_rsp, uint64_t new_rsp);
+extern void jump_to_usermode(uint64_t entry, uint64_t user_stack);
 
 #define MAX_THREADS 8
 #define STACK_SIZE 4096
@@ -67,7 +69,66 @@ void thread_create(void (*entry)(void))
   *(--sp) = 0; // r15
 
   t->rsp = (uint64_t) sp;
+  t->kernel_rsp = (uint64_t) sp;
+  t->user_rsp = 0;
+  t->is_user_mode = 0;
+  t->state = THREAD_RUNNING;
   t->next = NULL;
+  t->waiting_on_port = NULL;
+
+  if (!thread_list)
+  {
+    thread_list = t;
+    t->next = t;
+    current = t;
+  } else
+  {
+    Thread *it = thread_list;
+    while (it->next != thread_list)
+    {
+      it = it->next;
+    }
+    it->next = t;
+    t->next = thread_list;
+  }
+
+  thread_count++;
+}
+
+void thread_create_user(void (*entry)(void), void *user_stack)
+{
+  if (thread_count >= MAX_THREADS)
+  {
+    return;
+  }
+
+  Thread *t = &threads[thread_count];
+  uint8_t *kernel_stack = stacks[thread_count];
+  uint64_t *sp = (uint64_t *) (kernel_stack + STACK_SIZE);
+
+  sp = (uint64_t *) ((uint64_t) sp & ~0xF);
+
+  gdt_set_kernel_stack((uint64_t) sp);
+
+  // Setup initial stack frame - when this thread first runs,
+  // it will call jump_to_usermode with entry and user_stack as arguments
+  *(--sp) = (uint64_t) user_stack; // arg2: user stack (rsi)
+  *(--sp) = (uint64_t) entry; // arg1: entry point (rdi)
+  *(--sp) = (uint64_t) jump_to_usermode; // return address
+  *(--sp) = 0; // rbp
+  *(--sp) = 0; // rbx
+  *(--sp) = 0; // r12
+  *(--sp) = 0; // r13
+  *(--sp) = 0; // r14
+  *(--sp) = 0; // r15
+
+  t->rsp = (uint64_t) sp;
+  t->kernel_rsp = (uint64_t) (kernel_stack + STACK_SIZE); // Top of kernel stack
+  t->user_rsp = (uint64_t) user_stack;
+  t->is_user_mode = 1;
+  t->state = THREAD_RUNNING;
+  t->next = NULL;
+  t->waiting_on_port = NULL;
 
   if (!thread_list)
   {
@@ -126,6 +187,12 @@ void thread_yield()
 
   current = next;
 
+  // IMPORTANT: If switching to a user thread, update TSS.rsp0
+  if (next->is_user_mode)
+  {
+    gdt_set_kernel_stack(next->kernel_rsp);
+  }
+
   if (prev != next)
   {
     context_switch(&prev->rsp, current->rsp);
@@ -148,6 +215,13 @@ void scheduler_start()
   }
 
   current = runnable;
+
+  // Set up TSS if this is a user thread
+  if (current->is_user_mode)
+  {
+    gdt_set_kernel_stack(current->kernel_rsp);
+  }
+
   uint64_t dummy = 0;
   context_switch(&dummy, current->rsp);
 }
@@ -213,6 +287,37 @@ void port_destroy(Port *port)
   port->queue_tail = NULL;
   port->message_count = 0;
   port->blocked_thread = NULL;
+}
+
+// Port ID management for syscall interface
+uint32_t port_to_id(Port *port)
+{
+  if (!port)
+  {
+    return 0;
+  }
+
+  // Calculate index in ports array
+  // Add 1 so that 0 can be an invalid ID
+  uint32_t index = (uint32_t) (port - ports);
+  if (index >= MAX_PORTS)
+  {
+    return 0;
+  }
+
+  return index + 1;
+}
+
+Port *port_from_id(uint32_t id)
+{
+  // ID 0 is invalid
+  if (id == 0 || id > MAX_PORTS)
+  {
+    return NULL;
+  }
+
+  // Convert back to index (subtract 1)
+  return &ports[id - 1];
 }
 
 int send(Port *port, uint32_t id, uint32_t d0, uint32_t d1, uint32_t d2, uint32_t d3)

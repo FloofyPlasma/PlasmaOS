@@ -10,6 +10,7 @@ set(KERNEL_SOURCES
         pit.c
         pmm.c
         vmm.c
+        syscall.c
 )
 
 set(KERNEL_ASM_SOURCES
@@ -17,6 +18,8 @@ set(KERNEL_ASM_SOURCES
         switch.asm
         gdt_asm.asm
         idt_asm.asm
+        usermode.asm
+        syscall_asm.asm
 )
 
 add_executable(plasma.elf
