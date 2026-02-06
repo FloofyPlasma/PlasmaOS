@@ -1,5 +1,6 @@
 #include <stddef.h>
 
+#include "ata.h"
 #include "gdt.h"
 #include "idt.h"
 #include "kernel_limine.h"
@@ -162,6 +163,32 @@ void kernel_main(void)
   serial_print("Initializing syscall interface...\n");
   syscall_init();
   serial_print("Syscalls initialized\n\n");
+
+  serial_print("Initializing disk I/O...\n");
+  ata_init();
+  serial_print("Disk I/O initialized\n\n");
+
+  serial_print("Testing disk read...\n");
+  uint8_t boot_sector[512];
+  if (ata_read_sectors(0, 0, 1, boot_sector) == 0)
+  {
+    serial_print("  Successfully read boot sector\n");
+    serial_print("  First bytes: ");
+    for (int i = 0; i < 16; i++)
+    {
+      serial_print_hex(boot_sector[i]);
+      serial_print(" ");
+    }
+    serial_print("\n");
+    serial_print("  Boot signature: ");
+    serial_print_hex(boot_sector[510]);
+    serial_print(" ");
+    serial_print_hex(boot_sector[511]);
+    serial_print(" (should be 55 AA)\n\n");
+  } else
+  {
+    serial_print("  Failed to read boot sector\n\n");
+  }
 
   serial_print("Creating IPC test port...\n");
   test_port = port_create();
