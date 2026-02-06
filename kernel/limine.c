@@ -25,6 +25,9 @@ __attribute__((used,
     section(".limine_requests"))) static volatile struct limine_executable_address_request executable_address_request
     = { .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID, .revision = 0, .response = NULL };
 
+__attribute__((used, section(".limine_requests"))) volatile struct limine_module_request module_request
+    = { .id = LIMINE_MODULE_REQUEST_ID, .revision = 0, .response = NULL };
+
 __attribute__((used, section(".limine_requests"))) static volatile uint64_t limine_requests_end[2]
     = LIMINE_REQUESTS_END_MARKER;
 

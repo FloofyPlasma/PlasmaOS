@@ -97,64 +97,6 @@ void thread_sender()
   }
 }
 
-
-// ============================================================================
-// USERSPACE TEST PROGRAM
-// ============================================================================
-
-// Userspace test program entry point
-void user_program_entry(void)
-{
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Hello from ring 3!\n");
-
-  // Create a port
-  int64_t port_id = syscall0(SYS_PORT_CREATE);
-  if (port_id < 0)
-  {
-    syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] ERROR: Failed to create port!\n");
-    syscall1(SYS_THREAD_EXIT, 1);
-  }
-
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Created port successfully\n");
-
-  // Send a message to ourselves
-  int64_t result = syscall6(SYS_SEND, port_id, 42, 100, 200, 300, 400);
-  if (result < 0)
-  {
-    syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] ERROR: Failed to send message!\n");
-    syscall1(SYS_THREAD_EXIT, 1);
-  }
-
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Sent message successfully\n");
-
-  // Receive it back
-  Message msg;
-  result = syscall2(SYS_RECV, port_id, (uint64_t) &msg);
-  if (result < 0)
-  {
-    syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] ERROR: Failed to receive message!\n");
-    syscall1(SYS_THREAD_EXIT, 1);
-  }
-
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Received message successfully!\n");
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Message ID: ");
-  // TODO: Print the actual message ID (need number printing)
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[42]\n");
-
-  // Test yielding
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Testing yield...\n");
-  syscall0(SYS_THREAD_YIELD);
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Back from yield!\n");
-
-  // Exit cleanly
-  syscall1(SYS_DEBUG_PRINT, (uint64_t) "[USERSPACE] Test complete, exiting.\n");
-  syscall1(SYS_THREAD_EXIT, 0);
-
-  // Should never reach here
-  for (;;)
-    ;
-}
-
 void kernel_main(void)
 {
   serial_init();
@@ -232,11 +174,71 @@ void kernel_main(void)
 
   serial_print("Port created successfully\n\n");
 
+  // Optional: uncomment to test kernel-mode IPC
   // thread_create(thread_receiver);
   // thread_create(thread_sender);
-  serial_print("Creating userspace test thread...\n");
 
-  // Allocate user stack from PMM and map it with PAGE_USER flag
+  serial_print("Loading userspace init program...\n");
+
+  // Get the init module from Limine
+  if (module_request.response == NULL || module_request.response->module_count == 0)
+  {
+    serial_print("ERROR: No userspace modules loaded!\n");
+    serial_print("Make sure init.bin is included in the ISO\n");
+    hcf();
+  }
+
+  struct limine_file *init_module = module_request.response->modules[0];
+  serial_print("  Found module: ");
+  serial_print(init_module->path);
+  serial_print("\n  Size: ");
+  serial_print_dec(init_module->size);
+  serial_print(" bytes\n");
+
+  uint64_t user_code_virt = 0x0000000000400000ULL;
+  size_t pages_needed = (init_module->size + 0xFFF) / 0x1000;
+
+  serial_print("  Allocating and mapping ");
+  serial_print_dec(pages_needed);
+  serial_print(" pages for user code...\n");
+
+  address_space_t *kernel_as = vmm_get_kernel_address_space();
+
+  for (size_t i = 0; i < pages_needed; i++)
+  {
+    void *phys = pmm_alloc_page();
+    if (!phys)
+    {
+      serial_print("ERROR: Failed to allocate page for user code!\n");
+      hcf();
+    }
+
+    int map_result = vmm_map_page(
+        kernel_as, user_code_virt + (i * 0x1000), (uint64_t) phys, PAGE_PRESENT | PAGE_WRITE | PAGE_USER);
+
+    if (map_result != 0)
+    {
+      serial_print("ERROR: Failed to map user code page!\n");
+      hcf();
+    }
+  }
+
+  for (size_t i = 0; i < pages_needed; i++)
+  {
+    uint8_t *src = (uint8_t *) init_module->address + (i * 0x1000);
+    uint8_t *dst = (uint8_t *) (user_code_virt + (i * 0x1000));
+
+    for (size_t j = 0; j < 0x1000 && (i * 0x1000 + j) < init_module->size; j++)
+    {
+      dst[j] = src[j];
+    }
+  }
+
+  serial_print("  User code mapped successfully at ");
+  serial_print_hex(user_code_virt);
+  serial_print("\n");
+
+  serial_print("  Allocating user stack...\n");
   void *user_stack_phys = pmm_alloc_page();
   if (!user_stack_phys)
   {
@@ -244,11 +246,9 @@ void kernel_main(void)
     hcf();
   }
 
-  // Map user stack at a high user address (below kernel space)
   uint64_t user_stack_virt = 0x00007FFFFFFFE000ULL;
-  address_space_t *kernel_as = vmm_get_kernel_address_space();
 
-  serial_print("  Mapping to virtual address: ");
+  serial_print("  Mapping user stack to virtual address: ");
   serial_print_hex(user_stack_virt);
   serial_print("\n");
 
@@ -263,18 +263,19 @@ void kernel_main(void)
     hcf();
   }
 
-  serial_print("  User stack mapped successfully\n");
-
   void *user_stack_top = (void *) (user_stack_virt + 0x1000);
 
+  serial_print("  User stack mapped successfully\n");
+
+  serial_print("Creating userspace thread...\n");
   serial_print("  Entry point: ");
-  serial_print_hex((uint64_t) user_program_entry);
+  serial_print_hex(user_code_virt);
   serial_print("\n");
   serial_print("  Stack top: ");
   serial_print_hex((uint64_t) user_stack_top);
   serial_print("\n");
 
-  thread_create_user(user_program_entry, user_stack_top);
+  thread_create_user((void *) user_code_virt, user_stack_top);
   serial_print("Userspace thread created\n\n");
 
   serial_print("Starting scheduler...\n\n");

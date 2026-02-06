@@ -1,4 +1,5 @@
 #include "gdt.h"
+#include "serial.h"
 
 #include <stddef.h>
 
@@ -52,14 +53,14 @@ void gdt_init()
       GDT_GRANULARITY_4K | GDT_GRANULARITY_64BIT);
 
   gdt_set_entry(GDT_KERNEL_DATA, 0, 0xFFFFF, GDT_ACCESS_PRESENT | GDT_ACCESS_RING0 | GDT_ACCESS_SEGMENT | GDT_ACCESS_RW,
-      GDT_GRANULARITY_4K | GDT_GRANULARITY_64BIT);
+      GDT_GRANULARITY_4K);
 
   gdt_set_entry(GDT_USER_CODE, 0, 0xFFFFF,
       GDT_ACCESS_PRESENT | GDT_ACCESS_RING3 | GDT_ACCESS_SEGMENT | GDT_ACCESS_EXECUTABLE | GDT_ACCESS_RW,
       GDT_GRANULARITY_4K | GDT_GRANULARITY_64BIT);
 
   gdt_set_entry(GDT_USER_DATA, 0, 0xFFFFF, GDT_ACCESS_PRESENT | GDT_ACCESS_RING3 | GDT_ACCESS_SEGMENT | GDT_ACCESS_RW,
-      GDT_GRANULARITY_4K | GDT_GRANULARITY_64BIT);
+      GDT_GRANULARITY_4K);
 
   for (int i = 0; i < sizeof(tss_t); i++)
   {
@@ -75,6 +76,19 @@ void gdt_init()
 
   gdt_load(&gdt_pointer);
   tss_load(TSS_SEG);
+
+  serial_print("\nGDT Debug:\n");
+  for (int i = 0; i < 5; i++)
+  {
+    serial_print("  Entry ");
+    serial_print_dec(i);
+    serial_print(": ");
+
+    uint64_t *entry_ptr = (uint64_t *) &gdt[i];
+    serial_print_hex(*entry_ptr);
+    serial_print("\n");
+  }
+  serial_print("\n");
 }
 
 void gdt_set_kernel_stack(uint64_t stack) { tss.rsp0 = stack; }

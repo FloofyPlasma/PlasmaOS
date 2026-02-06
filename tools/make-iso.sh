@@ -34,6 +34,16 @@ fi
 echo "Copying kernel..."
 cp "$BUILD_DIR/bin/plasma.elf" "$ISO_ROOT/boot/"
 
+echo "Copying userland programs..."
+if [ -f "$BUILD_DIR/userland/init.bin" ]; then
+  cp "$BUILD_DIR/userland/init.bin" "$ISO_ROOT/boot/"
+  echo "  init.bin copied"
+else
+  echo "Error: init.bin not found at $BUILD_DIR/userland/init.bin"
+  echo "Userland may not have built correctly"
+  exit 1
+fi
+
 echo "Creating Limine configuration..."
 cat >"$ISO_ROOT/limine.conf" <<'EOF'
 timeout: 1
@@ -41,6 +51,7 @@ timeout: 1
 /PlasmaOS
   protocol: limine
   kernel_path: boot():/boot/plasma.elf
+  module_path: boot():/boot/init.bin
 EOF
 
 echo "Copying Limine bootloader files..."

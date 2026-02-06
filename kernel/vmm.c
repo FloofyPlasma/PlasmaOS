@@ -46,6 +46,7 @@ static page_table_t *get_or_create_table(uint64_t *entry, uint64_t flags)
 {
   if (*entry & PAGE_PRESENT)
   {
+    *entry |= (flags & PAGE_USER);
     uint64_t phys = entry_to_phys(*entry);
     return (page_table_t *) phys_to_virt(phys);
   }
@@ -58,10 +59,17 @@ static page_table_t *get_or_create_table(uint64_t *entry, uint64_t flags)
   }
 
   uint64_t phys = (uint64_t) table_phys;
+
+  // Zero out the new table
+  page_table_t *table_virt = (page_table_t *) phys_to_virt(phys);
+  for (int i = 0; i < 512; i++)
+  {
+    table_virt->entries[i] = 0;
+  }
+
   *entry = phys | flags;
 
-  // Return virtual address so caller can write to it
-  return (page_table_t *) phys_to_virt(phys);
+  return table_virt;
 }
 
 void vmm_init()

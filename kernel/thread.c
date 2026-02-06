@@ -95,6 +95,9 @@ void thread_create(void (*entry)(void))
   thread_count++;
 }
 
+extern void usermode_trampoline(void);
+
+
 void thread_create_user(void (*entry)(void), void *user_stack)
 {
   if (thread_count >= MAX_THREADS)
@@ -110,20 +113,20 @@ void thread_create_user(void (*entry)(void), void *user_stack)
 
   gdt_set_kernel_stack((uint64_t) sp);
 
-  // Setup initial stack frame - when this thread first runs,
-  // it will call jump_to_usermode with entry and user_stack as arguments
-  *(--sp) = (uint64_t) user_stack; // arg2: user stack (rsi)
-  *(--sp) = (uint64_t) entry; // arg1: entry point (rdi)
-  *(--sp) = (uint64_t) jump_to_usermode; // return address
+  // Setup initial stack frame
+  // When context_switch returns, it will jump to usermode_trampoline
+  // The trampoline will load r12 and r13 into rdi/rsi and call jump_to_usermode
+
+  *(--sp) = (uint64_t) usermode_trampoline; // return address
   *(--sp) = 0; // rbp
   *(--sp) = 0; // rbx
-  *(--sp) = 0; // r12
-  *(--sp) = 0; // r13
+  *(--sp) = (uint64_t) entry; // r12 - will be loaded into rdi
+  *(--sp) = (uint64_t) user_stack; // r13 - will be loaded into rsi
   *(--sp) = 0; // r14
   *(--sp) = 0; // r15
 
   t->rsp = (uint64_t) sp;
-  t->kernel_rsp = (uint64_t) (kernel_stack + STACK_SIZE); // Top of kernel stack
+  t->kernel_rsp = (uint64_t) (kernel_stack + STACK_SIZE);
   t->user_rsp = (uint64_t) user_stack;
   t->is_user_mode = 1;
   t->state = THREAD_RUNNING;

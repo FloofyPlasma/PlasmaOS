@@ -3,11 +3,10 @@ bits 64
 
 extern syscall_handler
 
-; Syscall entry point from userspace
-; Arguments in: rax=syscall_num, rdi=arg1, rsi=arg2, rdx=arg3, r10=arg4, r8=arg5, r9=arg6
-; Result in: rax
 global syscall_entry_asm
 syscall_entry_asm:
+    ; CPU has already pushed: SS, RSP, RFLAGS, CS, RIP
+    ; Save callee-saved registers
     push rbx
     push rbp
     push r12
@@ -15,31 +14,27 @@ syscall_entry_asm:
     push r14
     push r15
 
-    mov rcx, r10
+    ; syscall_handler(num, arg1, arg2, arg3, arg4, arg5, arg6)
+    ; Current state: rax=num, rdi=arg1, rsi=arg2, rdx=arg3, r10=arg4, r8=arg5, r9=arg6
+    ; C calling convention needs: rdi=num, rsi=arg1, rdx=arg2, rcx=arg3, r8=arg4, r9=arg5, stack=arg6
 
-    push rax
-    push rdi
-    push rsi
-    push rdx
-    push rcx
-    push r8
-    push r9
+    ; We need arg6 on stack for C calling convention
+    push r9             ; arg6
 
-    ; Setup args for syscall_handler(num, arg1, arg2, arg3, arg4, arg5, arg6)
-    mov rdi, rax
-    pop r9
-    pop r8
-    pop rcx
-    pop rdx
-    pop rsi
-    mov rax, [rsp]
-    mov [rsp], rdi
-    mov rdi, rax
+    ; Shift arguments
+    mov r9, r8          ; arg5: r8 -> r9
+    mov r8, r10         ; arg4: r10 -> r8
+    mov rcx, rdx        ; arg3: rdx -> rcx
+    mov rdx, rsi        ; arg2: rsi -> rdx
+    mov rsi, rdi        ; arg1: rdi -> rsi
+    mov rdi, rax        ; num: rax -> rdi
 
     call syscall_handler
 
+    ; Clean up arg6 from stack
     add rsp, 8
 
+    ; Restore callee-saved registers
     pop r15
     pop r14
     pop r13
@@ -47,4 +42,6 @@ syscall_entry_asm:
     pop rbp
     pop rbx
 
+    ; Return to userspace
+    ; The iretq will pop: RIP, CS, RFLAGS, RSP, SS
     iretq
