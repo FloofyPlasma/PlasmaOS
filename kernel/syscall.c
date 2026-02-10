@@ -57,8 +57,16 @@ int64_t syscall_handler(
       if (current)
       {
         current->state = THREAD_DEAD;
-        thread_yield();
       }
+      // Yield to another thread
+      thread_yield();
+
+      // If there are no other threads, we shoudl halt
+      for (;;)
+      {
+        __asm__ volatile("cli; hlt");
+      }
+
       return 0;
     }
 

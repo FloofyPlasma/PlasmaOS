@@ -12,6 +12,7 @@ set(KERNEL_SOURCES
         vmm.c
         syscall.c
         ata.c
+        ext2.c
 )
 
 set(KERNEL_ASM_SOURCES

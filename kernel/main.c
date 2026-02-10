@@ -1,6 +1,7 @@
 #include <stddef.h>
 
 #include "ata.h"
+#include "ext2.h"
 #include "gdt.h"
 #include "idt.h"
 #include "kernel_limine.h"
@@ -168,27 +169,10 @@ void kernel_main(void)
   ata_init();
   serial_print("Disk I/O initialized\n\n");
 
-  serial_print("Testing disk read...\n");
-  uint8_t boot_sector[512];
-  if (ata_read_sectors(0, 0, 1, boot_sector) == 0)
-  {
-    serial_print("  Successfully read boot sector\n");
-    serial_print("  First bytes: ");
-    for (int i = 0; i < 16; i++)
-    {
-      serial_print_hex(boot_sector[i]);
-      serial_print(" ");
-    }
-    serial_print("\n");
-    serial_print("  Boot signature: ");
-    serial_print_hex(boot_sector[510]);
-    serial_print(" ");
-    serial_print_hex(boot_sector[511]);
-    serial_print(" (should be 55 AA)\n\n");
-  } else
-  {
-    serial_print("  Failed to read boot sector\n\n");
-  }
+  serial_print("Initializing filesystem...\n");
+  ext2_init();
+  ext2_list_root();
+  serial_print("\n");
 
   serial_print("Creating IPC test port...\n");
   test_port = port_create();
@@ -201,29 +185,51 @@ void kernel_main(void)
 
   serial_print("Port created successfully\n\n");
 
-  // Optional: uncomment to test kernel-mode IPC
-  // thread_create(thread_receiver);
-  // thread_create(thread_sender);
-
   serial_print("Loading userspace init program...\n");
 
-  // Get the init module from Limine
-  if (module_request.response == NULL || module_request.response->module_count == 0)
+  void *init_data = NULL;
+  size_t init_size = 0;
+  int loaded_from_disk = 0;
+
+  void *disk_buffer = pmm_alloc_page();
+  if (disk_buffer)
   {
-    serial_print("ERROR: No userspace modules loaded!\n");
-    serial_print("Make sure init.bin is included in the ISO\n");
-    hcf();
+    int size = ext2_read_file("init.bin", disk_buffer, 8192); // Up to 8KB
+    if (size > 0)
+    {
+      serial_print("  Loaded init.bin from disk (");
+      serial_print_dec(size);
+      serial_print(" bytes)\n");
+      init_data = disk_buffer;
+      init_size = size;
+      loaded_from_disk = 1;
+    }
   }
 
-  struct limine_file *init_module = module_request.response->modules[0];
-  serial_print("  Found module: ");
-  serial_print(init_module->path);
-  serial_print("\n  Size: ");
-  serial_print_dec(init_module->size);
-  serial_print(" bytes\n");
+  if (!loaded_from_disk)
+  {
+    if (module_request.response == NULL || module_request.response->module_count == 0)
+    {
+      serial_print("ERROR: Could not load init from disk or modules!\n");
+      if (disk_buffer)
+      {
+        pmm_free_page(disk_buffer);
+      }
+      hcf();
+    }
+
+    struct limine_file *init_module = module_request.response->modules[0];
+    serial_print("  Loaded from Limine module: ");
+    serial_print(init_module->path);
+    serial_print(" (");
+    serial_print_dec(init_module->size);
+    serial_print(" bytes)\n");
+    init_data = (void *) init_module->address;
+    init_size = init_module->size;
+  }
 
   uint64_t user_code_virt = 0x0000000000400000ULL;
-  size_t pages_needed = (init_module->size + 0xFFF) / 0x1000;
+  size_t pages_needed = (init_size + 0xFFF) / 0x1000;
 
   serial_print("  Allocating and mapping ");
   serial_print_dec(pages_needed);
@@ -252,13 +258,18 @@ void kernel_main(void)
 
   for (size_t i = 0; i < pages_needed; i++)
   {
-    uint8_t *src = (uint8_t *) init_module->address + (i * 0x1000);
+    uint8_t *src = (uint8_t *) init_data + (i * 0x1000);
     uint8_t *dst = (uint8_t *) (user_code_virt + (i * 0x1000));
 
-    for (size_t j = 0; j < 0x1000 && (i * 0x1000 + j) < init_module->size; j++)
+    for (size_t j = 0; j < 0x1000 && (i * 0x1000 + j) < init_size; j++)
     {
       dst[j] = src[j];
     }
+  }
+
+  if (loaded_from_disk)
+  {
+    pmm_free_page(disk_buffer);
   }
 
   serial_print("  User code mapped successfully at ");
